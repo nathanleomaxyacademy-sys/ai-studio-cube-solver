@@ -1,0 +1,6 @@
+{
+  "name": "Rubik's Cube Solver",
+  "description": "An interactive Rubik's Cube solver that uses AI face photo scanning or manual input to provide a step-by-step 3D visual solution and algorithm explanations.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
