@@ -16,7 +16,7 @@ import {
   HelpCircle as QuestionIcon,
 } from 'lucide-react';
 import { CubeState, FaceName, CubeColor, DEFAULT_FACE_COLORS, COLOR_HEX, FACE_NAMES, SolutionStep } from './types';
-import { getSolvedCubeState, getBlankCubeState, simulateMove, generateScramble } from './utils/cubeSolver';
+import { getSolvedCubeState, getBlankCubeState, simulateMove, generateScramble, solveCubeLocally } from './utils/cubeSolver';
 
 import RubiksCube3D from './components/RubiksCube3D';
 import ManualInput from './components/ManualInput';
@@ -104,78 +104,92 @@ export default function App() {
     setCubeState(newState);
   };
 
-  // Call API to solve the current cube state
-  const handleSolve = async () => {
+  // Run the optimal local solver to solve the current cube state
+  const handleSolve = () => {
     setIsPlaying(false);
     setIsSolving(true);
     setValidationError(null);
     setSolutionSteps([]);
     setCurrentStepIndex(-1);
 
-    try {
-      const response = await fetch('/api/solve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cubeState }),
-      });
+    // Run solver in a small timeout to allow UI loading spinner to render
+    setTimeout(() => {
+      try {
+        const data = solveCubeLocally(cubeState);
 
-      const data = await response.json();
+        if (!data.success) {
+          setValidationError({
+            error: data.error || 'Solver Error',
+            details: data.details || 'Unable to solve this cube state.',
+          });
+          return;
+        }
 
-      if (!response.ok || !data.success) {
+        // Success! Set steps
+        const steps: SolutionStep[] = data.steps || [];
+        setSolutionSteps(steps);
+
+        // Pre-compute the state after each step for bug-free rendering
+        let currState = JSON.parse(JSON.stringify(cubeState));
+        const history: CubeState[] = [JSON.parse(JSON.stringify(currState))];
+
+        for (const step of steps) {
+          currState = simulateMove(currState, step.move);
+          history.push(JSON.parse(JSON.stringify(currState)));
+        }
+
+        setSolvedStateHistory(history);
+        setCurrentStepIndex(0); // Set to step 0 (scrambled starting position)
+      } catch (err: any) {
+        console.error(err);
         setValidationError({
-          error: data.error || 'Solver Error',
-          details: data.details || 'The backend was unable to solve this cube state.',
+          error: 'Solver Error',
+          details: err.message || 'An unexpected error occurred during local solving.',
         });
-        return;
+      } finally {
+        setIsSolving(false);
       }
-
-      // Success! Set steps
-      const steps: SolutionStep[] = data.steps;
-      setSolutionSteps(steps);
-
-      // Pre-compute the state after each step for bug-free rendering
-      let currState = JSON.parse(JSON.stringify(cubeState));
-      const history: CubeState[] = [JSON.parse(JSON.stringify(currState))];
-
-      for (const step of steps) {
-        currState = simulateMove(currState, step.move);
-        history.push(JSON.parse(JSON.stringify(currState)));
-      }
-
-      setSolvedStateHistory(history);
-      setCurrentStepIndex(0); // Set to step 0 (scrambled starting position)
-    } catch (err: any) {
-      console.error(err);
-      setValidationError({
-        error: 'Network Error',
-        details: 'Unable to communicate with the solver API. Ensure your backend server is active and accessible.',
-      });
-    } finally {
-      setIsSolving(false);
-    }
+    }, 50);
   };
 
   // Playback control: Move Next (triggers 3D turn animation)
   const handleNextStep = useCallback(() => {
-    if (solutionSteps.length === 0 || currentStepIndex >= solutionSteps.length) {
+    if (solutionSteps.length === 0 || animatingMove !== null) {
+      return;
+    }
+
+    if (currentStepIndex >= solutionSteps.length) {
       setIsPlaying(false);
       return;
     }
 
-    const nextStep = solutionSteps[currentStepIndex];
+    // If we are at -1 (initial state), we start from index 0
+    const targetIndex = currentStepIndex === -1 ? 0 : currentStepIndex;
+    const nextStep = solutionSteps[targetIndex];
+    if (!nextStep) {
+      setIsPlaying(false);
+      return;
+    }
+
+    if (currentStepIndex === -1) {
+      setCurrentStepIndex(0);
+    }
     setAnimatingMove(nextStep.move);
-  }, [solutionSteps, currentStepIndex]);
+  }, [solutionSteps, currentStepIndex, animatingMove]);
 
   // Playback control: Move Prev
   const handlePrevStep = () => {
-    if (currentStepIndex <= 0) return;
+    if (currentStepIndex <= -1) return;
 
     setIsPlaying(false);
     const prevIndex = currentStepIndex - 1;
     setCurrentStepIndex(prevIndex);
+    
     // Load the pre-computed exact state from history for that position
-    if (stateHistoryRef.current[prevIndex]) {
-      setCubeState(JSON.parse(JSON.stringify(stateHistoryRef.current[prevIndex])));
+    // Since prevIndex can be -1, the history index for state is prevIndex + 1 (i.e., index 0 corresponds to -1)
+    const historyIndex = prevIndex + 1;
+    if (stateHistoryRef.current[historyIndex]) {
+      setCubeState(JSON.parse(JSON.stringify(stateHistoryRef.current[historyIndex])));
     }
   };
 

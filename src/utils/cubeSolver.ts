@@ -1,4 +1,152 @@
-import { CubeState, FaceName, CubeColor, DEFAULT_FACE_COLORS, FACE_NAMES } from '../types';
+import Cube from 'cubejs';
+import { CubeState, FaceName, CubeColor, DEFAULT_FACE_COLORS, FACE_NAMES, SolutionStep, SolverResponse } from '../types';
+
+let isSolverInitialized = false;
+
+export function solveCubeLocally(cubeState: CubeState): SolverResponse {
+  try {
+    if (!isSolverInitialized) {
+      Cube.initSolver();
+      isSolverInitialized = true;
+    }
+
+    // A valid cube state must have U, R, F, D, L, B faces
+    const faces: FaceName[] = ['U', 'R', 'F', 'D', 'L', 'B'];
+    for (const face of faces) {
+      if (!cubeState[face] || !Array.isArray(cubeState[face]) || cubeState[face].length !== 9) {
+        return {
+          success: false,
+          error: `Invalid face configuration for face ${face}`,
+        };
+      }
+    }
+
+    // Count colors to make sure we have exactly 9 of each color
+    const counts: Record<CubeColor, number> = {
+      white: 0,
+      red: 0,
+      green: 0,
+      yellow: 0,
+      orange: 0,
+      blue: 0,
+    };
+
+    for (const face of faces) {
+      for (const color of cubeState[face]) {
+        if (counts[color] !== undefined) {
+          counts[color]++;
+        }
+      }
+    }
+
+    const incorrectCounts = Object.entries(counts).filter(([_, count]) => count !== 9);
+    if (incorrectCounts.length > 0) {
+      const details = Object.entries(counts)
+        .map(([color, count]) => `${color}: ${count}`)
+        .join(', ');
+      return {
+        success: false,
+        error: 'Color distribution error',
+        details: `A valid Rubik's Cube must have exactly 9 tiles of each color. Currently, you have: ${details}. Please verify your inputs.`,
+      };
+    }
+
+    // Map colors to standard facelet characters (U, R, F, D, L, B) based on center tiles
+    const C_U = cubeState.U[4];
+    const C_R = cubeState.R[4];
+    const C_F = cubeState.F[4];
+    const C_D = cubeState.D[4];
+    const C_L = cubeState.L[4];
+    const C_B = cubeState.B[4];
+
+    const colorToChar = (color: string): string => {
+      if (color === C_U) return 'U';
+      if (color === C_R) return 'R';
+      if (color === C_F) return 'F';
+      if (color === C_D) return 'D';
+      if (color === C_L) return 'L';
+      if (color === C_B) return 'B';
+      return 'U'; // Fallback
+    };
+
+    // Construct the 54-character string representation for cubejs
+    // Order: U, R, F, D, L, B
+    let cubeString = '';
+    const orderedFaces: FaceName[] = ['U', 'R', 'F', 'D', 'L', 'B'];
+    for (const face of orderedFaces) {
+      for (let i = 0; i < 9; i++) {
+        cubeString += colorToChar(cubeState[face][i]);
+      }
+    }
+
+    console.log('Solving Rubik\'s Cube locally with state string:', cubeString);
+
+    const cube = Cube.fromString(cubeString);
+    const solutionStr = cube.solve();
+
+    if (!solutionStr) {
+      return {
+        success: true,
+        solution: '',
+        steps: [],
+      };
+    }
+
+    const moves = solutionStr.split(/\s+/).filter(Boolean);
+    const steps: SolutionStep[] = moves.map((move) => {
+      const faceChar = move[0] as FaceName;
+      const modifier = move.substring(1);
+
+      let clockwise = true;
+      let double = false;
+      let explanation = '';
+
+      const faceNamesFull: Record<string, string> = {
+        U: 'Up (White center)',
+        R: 'Right (Red center)',
+        F: 'Front (Green center)',
+        D: 'Down (Yellow center)',
+        L: 'Left (Orange center)',
+        B: 'Back (Blue center)',
+      };
+
+      const faceName = faceNamesFull[faceChar] || faceChar;
+
+      if (modifier === "'") {
+        clockwise = false;
+        explanation = `Turn the ${faceName} face counter-clockwise by 90 degrees.`;
+      } else if (modifier === '2') {
+        double = true;
+        explanation = `Turn the ${faceName} face 180 degrees (either direction).`;
+      } else {
+        explanation = `Turn the ${faceName} face clockwise by 90 degrees.`;
+      }
+
+      return {
+        move,
+        explanation,
+        visualAction: {
+          face: faceChar,
+          clockwise,
+          double,
+        },
+      };
+    });
+
+    return {
+      success: true,
+      solution: solutionStr,
+      steps,
+    };
+  } catch (error: any) {
+    console.error('Error solving cube state locally:', error);
+    return {
+      success: false,
+      error: 'Unsolvable cube state',
+      details: 'This cube state is physically impossible to solve. This can occur if some tiles are colored incorrectly, or if a corner/edge was physically flipped on the cube. Please check the color of all tiles carefully.',
+    };
+  }
+}
 
 // Reset cube to a fully solved state
 export function getSolvedCubeState(): CubeState {
